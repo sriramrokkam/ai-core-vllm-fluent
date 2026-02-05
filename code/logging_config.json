@@ -1,0 +1,40 @@
+{
+    "version": 1,
+    "disable_existing_loggers": false,
+    "formatters": {
+        "json": {
+            "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+            "format": "%(message)s",
+            "rename_fields": {
+                "message": "msg"
+            },
+            "timestamp": true,
+            "static_fields": {
+                "logger": "vllm"
+            }
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+            "stream": "ext://sys.stdout"
+        },
+        "fileHandler": {
+            "class": "logging.FileHandler",
+            "formatter": "json",
+            "filename": "/app/logs/app.log"
+        }
+    },
+    "root": {
+        "level": "INFO",
+        "handlers": ["console", "fileHandler"]
+    },
+    "loggers": {
+        "vllm": {
+            "level": "INFO",
+            "handlers": ["console", "fileHandler"],
+            "propagate": false
+        }
+    }
+}

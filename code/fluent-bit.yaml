@@ -1,0 +1,33 @@
+service:
+  flush: 1
+  log_level: info
+  http_server: on
+  http_listen: 127.0.0.1
+  http_port: 2020
+
+pipeline:
+  inputs:
+    - name: tail
+      path: /app/logs/app.log
+      tag: vllm-app
+
+    # - name: prometheus_scrape
+    #   host: 127.0.0.1
+    #   port: 8000
+    #   tag: vllm-metrics
+    #   metrics_path: /metrics
+    #   scrape_interval: 10s
+
+  outputs:
+    - name: opensearch
+      match: vllm-app
+      host: ${OPENSEARCH_HOST}
+      port: 443
+      http_user: ${OPENSEARCH_USER}
+      http_passwd: ${OPENSEARCH_PASSWORD}
+      index: vllm-logs
+      tls: on
+      tls.verify: on
+      suppress_type_name: on
+      trace_error: on
+      trace_output: on
