@@ -22,6 +22,43 @@ pipeline:
       scrape_interval: 10s
 
   filters:
+    # Parse nested JSON in log field
+    - name: parser
+      match: vllm-app
+      key_name: log
+      parser: json
+      reserve_data: true
+      preserve_key: false
+
+    # Extract metrics from vLLM throughput messages
+    - name: lua
+      match: vllm-app
+      script: |
+        function extract_metrics(tag, timestamp, record)
+          local msg = record["msg"]
+          if msg and string.find(msg, "throughput") then
+            -- Extract numeric values from throughput message
+            local prompt_throughput = string.match(msg, "Avg prompt throughput: ([%d%.]+)")
+            local gen_throughput = string.match(msg, "Avg generation throughput: ([%d%.]+)")
+            local running_reqs = string.match(msg, "Running: (%d+)")
+            local waiting_reqs = string.match(msg, "Waiting: (%d+)")
+            local gpu_usage = string.match(msg, "GPU KV cache usage: ([%d%.]+)")
+            local cache_hit_rate = string.match(msg, "Prefix cache hit rate: ([%d%.]+)")
+            
+            if prompt_throughput then
+              record["metric_prompt_throughput"] = tonumber(prompt_throughput)
+              record["metric_generation_throughput"] = tonumber(gen_throughput)
+              record["metric_running_requests"] = tonumber(running_reqs)
+              record["metric_waiting_requests"] = tonumber(waiting_reqs)
+              record["metric_gpu_cache_usage_pct"] = tonumber(gpu_usage)
+              record["metric_cache_hit_rate_pct"] = tonumber(cache_hit_rate)
+              record["metric_type"] = "throughput"
+            end
+          end
+          return 2, timestamp, record
+        end
+      call: extract_metrics
+
     # Add metadata to application logs
     - name: record_modifier
       match: vllm-app
