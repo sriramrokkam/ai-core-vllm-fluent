@@ -23,37 +23,32 @@ pipeline:
 
   filters:
     # Add metadata to application logs
-    - name: modify
+    - name: record_modifier
       match: vllm-app
-      set:
+      record:
         type: log
         source: vllm-application
         environment: ${ENVIRONMENT:-production}
         category: application
-        ai_core_deployment: true
+        ai_core_deployment: "true"
         deployment_id: ${DEPLOYMENT_ID}
         model_name: ${MODEL_NAME}
         resource_group: default
         platform: kubernetes
         log_source: vllm-fluent-bit
-
-    # Add AI Core identifiers to application logs
-    - name: record_modifier
-      match: vllm-app
-      record:
         service: vllm-inference
         deployment_type: ai-core-serving
 
     # Process metrics: Add metadata and structure for Cloud Logging
-    - name: modify
+    - name: record_modifier
       match: vllm-metrics
-      set:
+      record:
         type: metric
         source: vllm-prometheus
         environment: ${ENVIRONMENT:-production}
         service: vllm
         category: metrics
-        ai_core_deployment: true
+        ai_core_deployment: "true"
         deployment_id: ${DEPLOYMENT_ID}
         model_name: ${MODEL_NAME}
         resource_group: default
