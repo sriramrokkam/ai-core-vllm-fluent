@@ -18,6 +18,15 @@ pipeline:
     #   metrics_path: /metrics
     #   scrape_interval: 10s
 
+  filters:
+    - name: record_modifier
+      match: vllm-app
+      record:
+        deployment_id: ${DEPLOYMENT_ID}
+        ai_core_deployment: "true"
+        model_name: ${MODEL_NAME}
+        resource_group: "default"
+
   outputs:
     - name: opensearch
       match: vllm-app

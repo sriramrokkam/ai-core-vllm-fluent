@@ -82,6 +82,12 @@ spec:
           env:
             - name: MODEL
               value: "{{inputs.parameters.modelName}}"
+            - name: MODEL_NAME
+              value: "{{inputs.parameters.modelName}}"
+            - name: DEPLOYMENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: OPENSEARCH_HOST
               valueFrom:
                 secretKeyRef:
