@@ -7,10 +7,13 @@ service:
 
 pipeline:
   inputs:
+    # Application logs from vLLM
     - name: tail
       path: /app/logs/app.log
       tag: vllm-app
+      parser: json
 
+    # vLLM Prometheus metrics
     - name: prometheus_scrape
       host: 127.0.0.1
       port: 8000
@@ -19,15 +22,71 @@ pipeline:
       scrape_interval: 10s
 
   filters:
+    # Add metadata to application logs
+    - name: modify
+      match: vllm-app
+      set:
+        type: log
+        source: vllm-application
+        environment: ${ENVIRONMENT:-production}
+        category: application
+        ai_core_deployment: true
+        deployment_id: ${DEPLOYMENT_ID}
+        model_name: ${MODEL_NAME}
+        resource_group: default
+        platform: kubernetes
+        log_source: vllm-fluent-bit
+
+    # Add AI Core identifiers to application logs
     - name: record_modifier
       match: vllm-app
       record:
+        service: vllm-inference
+        deployment_type: ai-core-serving
+
+    # Process metrics: Add metadata and structure for Cloud Logging
+    - name: modify
+      match: vllm-metrics
+      set:
+        type: metric
+        source: vllm-prometheus
+        environment: ${ENVIRONMENT:-production}
+        service: vllm
+        category: metrics
+        ai_core_deployment: true
         deployment_id: ${DEPLOYMENT_ID}
-        ai_core_deployment: "true"
         model_name: ${MODEL_NAME}
-        resource_group: "default"
+        resource_group: default
+
+    # Add timestamp and structure for Cloud Logging metrics
+    - name: lua
+      match: vllm-metrics
+      script: |
+        function process_metrics(tag, timestamp, record)
+            -- Add timestamp in ISO8601 format
+            record["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%S.000Z", timestamp)
+            record["metric_timestamp"] = timestamp
+            
+            -- Extract and organize vLLM metrics
+            local metrics = {}
+            for key, value in pairs(record) do
+                if string.match(key, "^vllm_") then
+                    metrics[key] = value
+                    record[key] = nil  -- Remove from root
+                end
+            end
+            
+            -- Add structured metrics
+            if next(metrics) ~= nil then
+                record["metrics"] = metrics
+            end
+            
+            return 1, timestamp, record
+        end
+      call: process_metrics
 
   outputs:
+    # Application logs output - HTTP with JSON format
     - name: http
       match: vllm-app
       host: ${OPENSEARCH_HOST}
@@ -42,3 +101,15 @@ pipeline:
       http_method: PUT
       uri: /
       compress: gzip
+
+    # Metrics output - OpenSearch with dedicated index
+    - name: opensearch
+      match: vllm-metrics
+      host: ${OPENSEARCH_HOST}
+      port: 443
+      http_user: ${OPENSEARCH_USER}
+      http_passwd: ${OPENSEARCH_PASSWORD}
+      index: metrics-vllm
+      tls: on
+      tls.verify: off
+      suppress_type_name: on
