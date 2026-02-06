@@ -60,7 +60,7 @@ spec:
         maxReplicas: 1
         containers:
         - name: kserve-container
-          image: "sriramrokkam/vllm-fluent:v1.4"
+          image: "sriramrokkam/vllm-fluent:v1.5"
           ports:
             - containerPort: 8000
               protocol: TCP

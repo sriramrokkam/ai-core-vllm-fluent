@@ -37,22 +37,28 @@ pipeline:
         function extract_metrics(tag, timestamp, record)
           local msg = record["msg"]
           if msg and string.find(msg, "throughput") then
-            -- Extract numeric values from throughput message
-            local prompt_throughput = string.match(msg, "Avg prompt throughput: ([%d%.]+)")
-            local gen_throughput = string.match(msg, "Avg generation throughput: ([%d%.]+)")
-            local running_reqs = string.match(msg, "Running: (%d+)")
-            local waiting_reqs = string.match(msg, "Waiting: (%d+)")
-            local gpu_usage = string.match(msg, "GPU KV cache usage: ([%d%.]+)")
-            local cache_hit_rate = string.match(msg, "Prefix cache hit rate: ([%d%.]+)")
+            -- Extract numeric values
+            local prompt_t = string.match(msg, "Avg prompt throughput: ([%d%.]+)")
+            local gen_t = string.match(msg, "Avg generation throughput: ([%d%.]+)")
+            local run = string.match(msg, "Running: (%d+)")
+            local wait = string.match(msg, "Waiting: (%d+)")
+            local gpu = string.match(msg, "GPU KV cache usage: ([%d%.]+)")
+            local cache = string.match(msg, "Prefix cache hit rate: ([%d%.]+)")
             
-            if prompt_throughput then
-              record["metric_prompt_throughput"] = tonumber(prompt_throughput)
-              record["metric_generation_throughput"] = tonumber(gen_throughput)
-              record["metric_running_requests"] = tonumber(running_reqs)
-              record["metric_waiting_requests"] = tonumber(waiting_reqs)
-              record["metric_gpu_cache_usage_pct"] = tonumber(gpu_usage)
-              record["metric_cache_hit_rate_pct"] = tonumber(cache_hit_rate)
-              record["metric_type"] = "throughput"
+            if prompt_t then
+              -- Create the nested metrics object exactly as requested
+              record["metrics"] = {}
+              record["metrics"]["vllm_prompt_throughput"] = tonumber(prompt_t)
+              record["metrics"]["vllm_generation_throughput"] = tonumber(gen_t)
+              record["metrics"]["vllm_num_requests_running"] = tonumber(run)
+              record["metrics"]["vllm_num_requests_waiting"] = tonumber(wait)
+              record["metrics"]["vllm_gpu_cache_usage_perc"] = tonumber(gpu)
+              record["metrics"]["vllm_cache_hit_rate_perc"] = tonumber(cache)
+              
+              -- Update metadata for these specific records to be identified as metrics
+              record["type"] = "metric"
+              record["category"] = "metrics"
+              record["source"] = "vllm-throughput"
             end
           end
           return 2, timestamp, record
