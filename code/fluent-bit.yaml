@@ -13,13 +13,11 @@ pipeline:
       tag: vllm-app
       parser: json
 
-    # vLLM Prometheus metrics
-    - name: prometheus_scrape
-      host: 127.0.0.1
-      port: 8000
-      tag: vllm-metrics
-      metrics_path: /metrics
-      scrape_interval: 10s
+    # vLLM Prometheus metrics (Robust version using curl to avoid decoding errors)
+    - name: exec
+      command: curl -s http://127.0.0.1:8000/metrics
+      interval: 10
+      tag: vllm-metrics-raw
 
   filters:
     # Parse nested JSON in log field
@@ -98,30 +96,50 @@ pipeline:
 
     # Add timestamp and structure for Cloud Logging metrics
     - name: lua
-      match: vllm-metrics
+      match: vllm-metrics-raw
       script: |
-        function process_metrics(tag, timestamp, record)
-            -- Add timestamp in ISO8601 format
-            record["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%S.000Z", timestamp)
-            record["metric_timestamp"] = timestamp
+        function parse_and_process(tag, timestamp, record)
+            local raw = record["exec"]
+            if not raw then return 0, 0, 0 end
             
-            -- Extract and organize vLLM metrics
+            local new_record = {}
+            new_record["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%S.000Z", timestamp)
+            new_record["metric_timestamp"] = timestamp
+            new_record["type"] = "metric"
+            new_record["source"] = "vllm-prometheus"
+            new_record["category"] = "metrics"
+            
             local metrics = {}
-            for key, value in pairs(record) do
-                if string.match(key, "^vllm_") then
-                    metrics[key] = value
-                    record[key] = nil  -- Remove from root
+            -- Fast line-by-line parsing of Prometheus text format
+            for line in raw:gmatch("[^\r\n]+") do
+                if not line:match("^#") then -- Skip comments
+                    -- Match metric_name{labels} value
+                    local name, val = line:match("^([%w_:]+){?.-}?%s+([%d%.eE%+%-]+)")
+                    if name and val then
+                        metrics[name] = tonumber(val)
+                    end
                 end
             end
             
-            -- Add structured metrics
             if next(metrics) ~= nil then
-                record["metrics"] = metrics
+                new_record["metrics"] = metrics
+                return 2, timestamp, new_record
             end
             
-            return 1, timestamp, record
+            return 0, 0, 0
         end
-      call: process_metrics
+      call: parse_and_process
+
+    # Add metadata to metrics
+    - name: record_modifier
+      match: vllm-metrics-raw
+      record:
+        ai_core_deployment: "true"
+        deployment_id: ${DEPLOYMENT_ID}
+        model_name: ${MODEL_NAME}
+        environment: ${ENVIRONMENT:-production}
+        service: vllm
+        resource_group: default
 
   outputs:
     # Application logs output - HTTP with JSON format
