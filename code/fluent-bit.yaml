@@ -7,81 +7,48 @@ service:
 
 pipeline:
   inputs:
-    # Application logs
+    # Collect vLLM application logs
     - name: tail
       path: /app/logs/app.log
-      tag: vllm-app
+      tag: vllm.logs
+      parser: json
+      refresh_interval: 5
 
-    # Robust metrics scraping using curl
-    - name: exec
-      command: curl -s http://127.0.0.1:8000/metrics
-      interval: 10
-      tag: vllm-metrics-raw
-
-  filters:
-    # Lua script to parse Prometheus text into JSON
-    - name: lua
-      match: vllm-metrics-raw
-      script: |
-        function parse_prometheus(tag, timestamp, record)
-            local raw = record["exec"]
-            if not raw then return 0, 0, 0 end
-            
-            local new_record = {}
-            new_record["type"] = "metric"
-            new_record["source"] = "vllm-prometheus"
-            new_record["deployment_id"] = os.getenv("DEPLOYMENT_ID")
-            new_record["model_name"] = os.getenv("MODEL_NAME")
-            
-            local metrics = {}
-            for line in raw:gmatch("[^\r\n]+") do
-                if not line:match("^#") then
-                    local name, val = line:match("^([%w_:]+){?.-}?%s+([%d%.eE%+%-]+)")
-                    if name and val then
-                        metrics[name] = tonumber(val)
-                    end
-                end
-            end
-            
-            if next(metrics) ~= nil then
-                new_record["metrics"] = metrics
-                return 2, timestamp, new_record
-            end
-            return 0, 0, 0
-        end
-      call: parse_prometheus
-
-    # Add metadata back to app logs (Required for SAP AI Core Dashboard to find them)
-    - name: record_modifier
-      match: vllm-app
-      record:
-        deployment_id: ${DEPLOYMENT_ID}
-        model_name: ${MODEL_NAME}
-        ai_core_deployment: "true"
+    # Scrape Prometheus metrics from vLLM
+    - name: prometheus_scrape
+      host: 127.0.0.1
+      port: 8000
+      tag: vllm.metrics
+      metrics_path: /metrics
+      scrape_interval: 30s
 
   outputs:
-    # Application logs to Cloud Logging
+    # Send logs to Cloud Logging via Basic Auth
     - name: http
-      match: vllm-app
+      match: vllm.logs
       host: ${OPENSEARCH_HOST}
       port: 443
+      uri: /
+      format: json
+      json_date_key: timestamp
+      json_date_format: iso8601
       http_user: ${OPENSEARCH_USER}
       http_passwd: ${OPENSEARCH_PASSWORD}
       tls: on
       tls.verify: off
-      format: json
-      http_method: PUT
-      uri: /
       compress: gzip
 
-    # Metrics to Cloud Logging
-    - name: opensearch
-      match: vllm-metrics-raw
+    # Send metrics to Cloud Logging via Basic Auth
+    - name: http
+      match: vllm.metrics
       host: ${OPENSEARCH_HOST}
       port: 443
+      uri: /
+      format: json
+      json_date_key: timestamp
+      json_date_format: iso8601
       http_user: ${OPENSEARCH_USER}
       http_passwd: ${OPENSEARCH_PASSWORD}
-      index: metrics-vllm
       tls: on
       tls.verify: off
-      suppress_type_name: on
+      compress: gzip

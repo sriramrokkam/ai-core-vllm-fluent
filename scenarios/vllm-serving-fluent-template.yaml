@@ -1,14 +1,14 @@
 apiVersion: ai.sap.com/v1alpha1
 kind: ServingTemplate
 metadata:
-  name: vllm
+  name: vllm-fluent
   annotations:
     scenarios.ai.sap.com/description: "Run a vLLM server on SAP AI Core"
-    scenarios.ai.sap.com/name: "vllm"
+    scenarios.ai.sap.com/name: "vllm-fluent"
     executables.ai.sap.com/description: "Run a LocalAI server on SAP AI Core"
-    executables.ai.sap.com/name: "vllm"
+    executables.ai.sap.com/name: "vllm-fluent"
   labels:
-    scenarios.ai.sap.com/id: "vllm"
+    scenarios.ai.sap.com/id: "vllm-fluent"
     ai.sap.com/version: "0.0.1"
 spec:
   inputs:
@@ -56,61 +56,45 @@ spec:
         ai.sap.com/resourcePlan: "{{inputs.parameters.resourcePlan}}"
     spec: |
       predictor:
-        imagePullSecrets:
-        - name: "vllm-poc-artifactory"
         minReplicas: 1
         maxReplicas: 1
         containers:
         - name: kserve-container
-          image: "vllm-poc.common.repositories.cloud.sap/vllm-openai:latest"
+          image: "sriramrokkam/vllm-openai:fluent"
           ports:
             - containerPort: 8000
               protocol: TCP
-          command: ["/app/start.sh"]
+          command: ["/bin/sh", "-c"]
           args:
-            - "--model"
-            - "{{inputs.parameters.modelName}}"
-            - "--dtype"
-            - "{{inputs.parameters.dataType}}"
-            - "--gpu-memory-utilization"
-            - "{{inputs.parameters.gpuMemoryUtilization}}"
-            - "--enforce-eager"
-            - "--max-model-len"
-            - "{{inputs.parameters.maxTokenLen}}"
-            - "--max-num-batched-tokens"
-            - "{{inputs.parameters.maxNumBatchedTokens}}"
-            - "--max-num-seqs"
-            - "{{inputs.parameters.maxNumSeqs}}"
-            - "--quantization"
-            - "{{inputs.parameters.quantization}}"
+            - >
+              set -e && echo "-------------Starting vLLM OpenAI API Server--------------"
+              && python3 -m vllm.entrypoints.openai.api_server
+              --model {{inputs.parameters.modelName}}
+              --dtype {{inputs.parameters.dataType}}
+              --gpu-memory-utilization {{inputs.parameters.gpuMemoryUtilization}}
+              --enforce-eager
+              --max-model-len {{inputs.parameters.maxTokenLen}}
+              --max-num-batched-tokens {{inputs.parameters.maxNumBatchedTokens}}
+              --max-num-seqs {{inputs.parameters.maxNumSeqs}}
+              --quantization {{inputs.parameters.quantization}} &
+              VLLM_PID=$! && sleep 90
+              && echo "-------------Starting Fluent Bit--------------"
+              && /opt/fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.yaml &
+              FLUENT_PID=$! && wait $VLLM_PID $FLUENT_PID
           env:
             - name: MODEL
               value: "{{inputs.parameters.modelName}}"
-            # AI Core metadata for log enrichment
-            - name: AICORE_DEPLOYMENT_ID
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: AICORE_RESOURCE_GROUP
-              value: "default"
-            - name: AICORE_SCENARIO_ID
-              value: "vllm"
-            - name: AICORE_EXECUTION_ID
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.uid
-            # Cloud Logging configuration
-            - name: CLOUD_LOGGING_HOST
+            - name: OPENSEARCH_HOST
               valueFrom:
                 secretKeyRef:
                   name: cloud-logging-credentials
                   key: host
-            - name: CLOUD_LOGGING_USER
+            - name: OPENSEARCH_USER
               valueFrom:
                 secretKeyRef:
                   name: cloud-logging-credentials
                   key: user
-            - name: CLOUD_LOGGING_PASSWORD
+            - name: OPENSEARCH_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: cloud-logging-credentials
