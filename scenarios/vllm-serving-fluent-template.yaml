@@ -1,14 +1,14 @@
 apiVersion: ai.sap.com/v1alpha1
 kind: ServingTemplate
 metadata:
-  name: vllm-fluent
+  name: vllm
   annotations:
     scenarios.ai.sap.com/description: "Run a vLLM server on SAP AI Core"
-    scenarios.ai.sap.com/name: "vllm-fluent"
+    scenarios.ai.sap.com/name: "vllm"
     executables.ai.sap.com/description: "Run a LocalAI server on SAP AI Core"
-    executables.ai.sap.com/name: "vllm-fluent"
+    executables.ai.sap.com/name: "vllm"
   labels:
-    scenarios.ai.sap.com/id: "vllm-fluent"
+    scenarios.ai.sap.com/id: "vllm"
     ai.sap.com/version: "0.0.1"
 spec:
   inputs:
@@ -56,45 +56,62 @@ spec:
         ai.sap.com/resourcePlan: "{{inputs.parameters.resourcePlan}}"
     spec: |
       predictor:
+        imagePullSecrets:
+        - name: "vllm-poc-artifactory"
         minReplicas: 1
         maxReplicas: 1
         containers:
         - name: kserve-container
-          image: "sriramrokkam/vllm-aicore:latest"
+          image: "vllm-poc.common.repositories.cloud.sap/vllm-openai:latest"
           ports:
             - containerPort: 8000
               protocol: TCP
+          command: ["/app/start.sh"]
+          args:
+            - "--model"
+            - "{{inputs.parameters.modelName}}"
+            - "--dtype"
+            - "{{inputs.parameters.dataType}}"
+            - "--gpu-memory-utilization"
+            - "{{inputs.parameters.gpuMemoryUtilization}}"
+            - "--enforce-eager"
+            - "--max-model-len"
+            - "{{inputs.parameters.maxTokenLen}}"
+            - "--max-num-batched-tokens"
+            - "{{inputs.parameters.maxNumBatchedTokens}}"
+            - "--max-num-seqs"
+            - "{{inputs.parameters.maxNumSeqs}}"
+            - "--quantization"
+            - "{{inputs.parameters.quantization}}"
           env:
-            - name: VLLM_OPTS
-              value: >
-                --model {{inputs.parameters.modelName}}
-                --dtype {{inputs.parameters.dataType}}
-                --gpu-memory-utilization {{inputs.parameters.gpuMemoryUtilization}}
-                --enforce-eager
-                --max-model-len {{inputs.parameters.maxTokenLen}}
-                --max-num-batched-tokens {{inputs.parameters.maxNumBatchedTokens}}
-                --max-num-seqs {{inputs.parameters.maxNumSeqs}}
-                --quantization {{inputs.parameters.quantization}}
             - name: MODEL
               value: "{{inputs.parameters.modelName}}"
-            - name: MODEL_NAME
-              value: "{{inputs.parameters.modelName}}"
-            - name: DEPLOYMENT_ID
+            # AI Core metadata for log enrichment
+            - name: AICORE_DEPLOYMENT_ID
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: OPENSEARCH_HOST
+            - name: AICORE_RESOURCE_GROUP
+              value: "default"
+            - name: AICORE_SCENARIO_ID
+              value: "vllm"
+            - name: AICORE_EXECUTION_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            # Cloud Logging configuration
+            - name: CLOUD_LOGGING_HOST
               valueFrom:
                 secretKeyRef:
                   name: cloud-logging-credentials
                   key: host
-            - name: OPENSEARCH_USER
+            - name: CLOUD_LOGGING_USER
               valueFrom:
                 secretKeyRef:
                   name: cloud-logging-credentials
                   key: user
-            - name: OPENSEARCH_PASSWORD
+            - name: CLOUD_LOGGING_PASSWORD
               valueFrom:
-                secretKeyRef: 
+                secretKeyRef:
                   name: cloud-logging-credentials
                   key: password
