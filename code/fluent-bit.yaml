@@ -7,113 +7,35 @@ service:
 
 pipeline:
   inputs:
-    # Application logs from vLLM
+    # Application logs
     - name: tail
       path: /app/logs/app.log
       tag: vllm-app
-      parser: json
 
-    # vLLM Prometheus metrics (Robust version using curl to avoid decoding errors)
+    # Robust metrics scraping using curl
     - name: exec
       command: curl -s http://127.0.0.1:8000/metrics
       interval: 10
       tag: vllm-metrics-raw
 
   filters:
-    # Parse nested JSON in log field
-    - name: parser
-      match: vllm-app
-      key_name: log
-      parser: json
-      reserve_data: true
-      preserve_key: false
-
-    # Extract metrics from vLLM throughput messages
-    - name: lua
-      match: vllm-app
-      script: |
-        function extract_metrics(tag, timestamp, record)
-          local msg = record["msg"]
-          if msg and string.find(msg, "throughput") then
-            -- Extract numeric values
-            local prompt_t = string.match(msg, "Avg prompt throughput: ([%d%.]+)")
-            local gen_t = string.match(msg, "Avg generation throughput: ([%d%.]+)")
-            local run = string.match(msg, "Running: (%d+)")
-            local wait = string.match(msg, "Waiting: (%d+)")
-            local gpu = string.match(msg, "GPU KV cache usage: ([%d%.]+)")
-            local cache = string.match(msg, "Prefix cache hit rate: ([%d%.]+)")
-            
-            if prompt_t then
-              -- Create the nested metrics object exactly as requested
-              record["metrics"] = {}
-              record["metrics"]["vllm_prompt_throughput"] = tonumber(prompt_t)
-              record["metrics"]["vllm_generation_throughput"] = tonumber(gen_t)
-              record["metrics"]["vllm_num_requests_running"] = tonumber(run)
-              record["metrics"]["vllm_num_requests_waiting"] = tonumber(wait)
-              record["metrics"]["vllm_gpu_cache_usage_perc"] = tonumber(gpu)
-              record["metrics"]["vllm_cache_hit_rate_perc"] = tonumber(cache)
-              
-              -- Update metadata for these specific records to be identified as metrics
-              record["type"] = "metric"
-              record["category"] = "metrics"
-              record["source"] = "vllm-throughput"
-            end
-          end
-          return 2, timestamp, record
-        end
-      call: extract_metrics
-
-    # Add metadata to application logs
-    - name: record_modifier
-      match: vllm-app
-      record:
-        type: log
-        source: vllm-application
-        environment: ${ENVIRONMENT:-production}
-        category: application
-        ai_core_deployment: "true"
-        deployment_id: ${DEPLOYMENT_ID}
-        model_name: ${MODEL_NAME}
-        resource_group: default
-        platform: kubernetes
-        log_source: vllm-fluent-bit
-        service: vllm-inference
-        deployment_type: ai-core-serving
-
-    # Process metrics: Add metadata and structure for Cloud Logging
-    - name: record_modifier
-      match: vllm-metrics
-      record:
-        type: metric
-        source: vllm-prometheus
-        environment: ${ENVIRONMENT:-production}
-        service: vllm
-        category: metrics
-        ai_core_deployment: "true"
-        deployment_id: ${DEPLOYMENT_ID}
-        model_name: ${MODEL_NAME}
-        resource_group: default
-
-    # Add timestamp and structure for Cloud Logging metrics
+    # Lua script to parse Prometheus text into JSON
     - name: lua
       match: vllm-metrics-raw
       script: |
-        function parse_and_process(tag, timestamp, record)
+        function parse_prometheus(tag, timestamp, record)
             local raw = record["exec"]
             if not raw then return 0, 0, 0 end
             
             local new_record = {}
-            new_record["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%S.000Z", timestamp)
-            new_record["metric_timestamp"] = timestamp
             new_record["type"] = "metric"
             new_record["source"] = "vllm-prometheus"
-            new_record["category"] = "metrics"
+            new_record["deployment_id"] = os.getenv("DEPLOYMENT_ID")
+            new_record["model_name"] = os.getenv("MODEL_NAME")
             
             local metrics = {}
-            -- Fast line-by-line parsing of Prometheus text format
             for line in raw:gmatch("[^\r\n]+") do
-                if not line:match("^#") then -- Skip comments
-                    -- Match metric_name{labels} value
+                if not line:match("^#") then
                     local name, val = line:match("^([%w_:]+){?.-}?%s+([%d%.eE%+%-]+)")
                     if name and val then
                         metrics[name] = tonumber(val)
@@ -125,24 +47,20 @@ pipeline:
                 new_record["metrics"] = metrics
                 return 2, timestamp, new_record
             end
-            
             return 0, 0, 0
         end
-      call: parse_and_process
+      call: parse_prometheus
 
-    # Add metadata to metrics
+    # Add metadata back to app logs (Required for SAP AI Core Dashboard to find them)
     - name: record_modifier
-      match: vllm-metrics-raw
+      match: vllm-app
       record:
-        ai_core_deployment: "true"
         deployment_id: ${DEPLOYMENT_ID}
         model_name: ${MODEL_NAME}
-        environment: ${ENVIRONMENT:-production}
-        service: vllm
-        resource_group: default
+        ai_core_deployment: "true"
 
   outputs:
-    # Application logs output - HTTP with JSON format
+    # Application logs to Cloud Logging
     - name: http
       match: vllm-app
       host: ${OPENSEARCH_HOST}
@@ -152,15 +70,13 @@ pipeline:
       tls: on
       tls.verify: off
       format: json
-      json_date_key: timestamp
-      json_date_format: iso8601
       http_method: PUT
       uri: /
       compress: gzip
 
-    # Metrics output - OpenSearch with dedicated index
+    # Metrics to Cloud Logging
     - name: opensearch
-      match: vllm-metrics
+      match: vllm-metrics-raw
       host: ${OPENSEARCH_HOST}
       port: 443
       http_user: ${OPENSEARCH_USER}
