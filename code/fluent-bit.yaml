@@ -4,52 +4,140 @@ service:
   http_server: on
   http_listen: 127.0.0.1
   http_port: 2020
-
+ 
 pipeline:
   inputs:
-    # Collect vLLM application logs
+    # Application logs
     - name: tail
       path: /app/logs/app.log
-      tag: vllm.logs
+      tag: vllm-app
       parser: json
-      refresh_interval: 5
-      skip_long_lines: on
-      skip_empty_lines: on
-
-    # Fetch metrics and convert to JSON using a Python one-liner
-    - name: exec
-      command: |
-        curl -s -f http://127.0.0.1:8000/metrics | python3 -c "import sys, json; print(json.dumps({l.split()[0]: l.split()[1] for l in sys.stdin if l.startswith('vllm') and len(l.split())==2}))"
-      interval_sec: 30
-      tag: vllm.metrics
-
+ 
+    # vLLM Prometheus metrics - Using HTTP input (more reliable)
+    - name: http
+      host: 127.0.0.1
+      port: 8000
+      uri: /metrics
+      tag: vllm-metrics
+      interval_sec: 10
+      format: none
+      successful_response_code: 200
+ 
+  filters:
+    # Parse Prometheus text format into key-value pairs
+    - name: lua
+      match: vllm-metrics
+      script: |
+        function parse_prometheus(tag, timestamp, record)
+            -- Check if already parsed (has metric keys)
+            for key, _ in pairs(record) do
+                if string.match(key, "^vllm_") or string.match(key, "^python_") or string.match(key, "^process_") then
+                    return 1, timestamp, record
+                end
+            end
+           
+            -- Get raw text from HTTP input
+            local raw_text = record["log"] or ""
+            if raw_text == "" then
+                return -1, 0, nil
+            end
+           
+            local parsed_metrics = {}
+           
+            -- Parse each line of Prometheus text
+            for line in string.gmatch(raw_text, "[^\r\n]+") do
+                -- Skip comments and empty lines
+                if not string.match(line, "^%s*#") and line ~= "" then
+                    -- Match: metric_name{labels} value OR metric_name value
+                    local metric_name, value = string.match(line, "^([%w_:]+)%{.-%}%s+([%d%.%-eE%+]+)")
+                    if not metric_name then
+                        metric_name, value = string.match(line, "^([%w_:]+)%s+([%d%.%-eE%+]+)")
+                    end
+                   
+                    if metric_name and value then
+                        parsed_metrics[metric_name] = tonumber(value)
+                    end
+                end
+            end
+           
+            -- Return parsed metrics if found
+            if next(parsed_metrics) ~= nil then
+                return 1, timestamp, parsed_metrics
+            end
+           
+            return -1, 0, nil
+        end
+      call: parse_prometheus
+ 
+ 
+    # Add metadata to application logs
+    - name: modify
+      match: vllm-app
+      add: type log
+      add: source vllm-application
+      add: environment ${ENVIRONMENT:-production}
+      add: category application
+ 
+    # Process metrics: Add metadata and structure for Cloud Logging
+    - name: modify
+      match: vllm-metrics
+      add: type metric
+      add: source vllm-prometheus
+      add: environment ${ENVIRONMENT:-production}
+      add: service vllm
+      add: category metrics
+ 
+    # Add timestamp and structure for Cloud Logging
+    - name: lua
+      match: vllm-metrics
+      script: |
+        function process_metrics(tag, timestamp, record)
+            -- Add timestamp in ISO8601 format
+            record["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%S.000Z", timestamp)
+            record["metric_timestamp"] = timestamp
+           
+            -- Extract and organize vLLM metrics
+            local metrics = {}
+            for key, value in pairs(record) do
+                if string.match(key, "^vllm_") then
+                    metrics[key] = value
+                    record[key] = nil  -- Remove from root
+                end
+            end
+           
+            -- Add structured metrics
+            if next(metrics) ~= nil then
+                record["metrics"] = metrics
+            end
+           
+            return 1, timestamp, record
+        end
+      call: process_metrics
+ 
   outputs:
-    # Send logs to Cloud Logging via Basic Auth
+    # Application logs output - Direct to OpenSearch
     - name: http
-      match: vllm.logs
+      match: "vllm-app"
       host: ${OPENSEARCH_HOST}
       port: 443
-      uri: /
-      format: json
-      json_date_key: timestamp
-      json_date_format: iso8601
       http_user: ${OPENSEARCH_USER}
       http_passwd: ${OPENSEARCH_PASSWORD}
       tls: on
       tls.verify: off
+      format: json
+      http_method: PUT
+      uri: /
       compress: gzip
-
-    # Send metrics to Cloud Logging via Basic Auth
-    - name: http
-      match: vllm.metrics
+ 
+    # Metrics output - Direct to OpenSearch (metric format preserved)
+    - name: opensearch
+      match: vllm-metrics
       host: ${OPENSEARCH_HOST}
       port: 443
-      uri: /
-      format: json
-      json_date_key: timestamp
-      json_date_format: iso8601
       http_user: ${OPENSEARCH_USER}
       http_passwd: ${OPENSEARCH_PASSWORD}
+      index: metrics-vllm
       tls: on
       tls.verify: off
-      compress: gzip
+      suppress_type_name: on
+ 
