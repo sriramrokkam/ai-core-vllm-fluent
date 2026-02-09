@@ -13,14 +13,15 @@ pipeline:
       tag: vllm.logs
       parser: json
       refresh_interval: 5
+      skip_long_lines: on
+      skip_empty_lines: on
 
-    # Scrape Prometheus metrics from vLLM
-    - name: prometheus_scrape
-      host: 127.0.0.1
-      port: 8000
+    # Fetch metrics and convert to JSON using a Python one-liner
+    - name: exec
+      command: |
+        curl -s -f http://127.0.0.1:8000/metrics | python3 -c "import sys, json; print(json.dumps({l.split()[0]: l.split()[1] for l in sys.stdin if l.startswith('vllm') and len(l.split())==2}))"
+      interval_sec: 30
       tag: vllm.metrics
-      metrics_path: /metrics
-      scrape_interval: 30s
 
   outputs:
     # Send logs to Cloud Logging via Basic Auth
