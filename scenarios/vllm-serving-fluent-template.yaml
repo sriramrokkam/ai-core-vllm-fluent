@@ -60,26 +60,21 @@ spec:
         maxReplicas: 1
         containers:
         - name: kserve-container
-          image: "sriramrokkam/vllm-fluent:v1.5"
+          image: "sriramrokkam/vllm-aicore:latest"
           ports:
             - containerPort: 8000
               protocol: TCP
-          command: ["/bin/sh", "-c"]
-          args:
-            - >
-              set -e && echo "-------------Starting Fluent Bit--------------" 
-              && /opt/fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.yaml &
-              echo "-------------Starting vLLM OpenAI API Server--------------" 
-              && python3 -m vllm.entrypoints.openai.api_server 
-              --model {{inputs.parameters.modelName}}
-              --dtype {{inputs.parameters.dataType}}
-              --gpu-memory-utilization {{inputs.parameters.gpuMemoryUtilization}}
-              --enforce-eager
-              --max-model-len {{inputs.parameters.maxTokenLen}}
-              --max-num-batched-tokens {{inputs.parameters.maxNumBatchedTokens}}
-              --max-num-seqs {{inputs.parameters.maxNumSeqs}}
-              --quantization {{inputs.parameters.quantization}}
           env:
+            - name: VLLM_OPTS
+              value: >
+                --model {{inputs.parameters.modelName}}
+                --dtype {{inputs.parameters.dataType}}
+                --gpu-memory-utilization {{inputs.parameters.gpuMemoryUtilization}}
+                --enforce-eager
+                --max-model-len {{inputs.parameters.maxTokenLen}}
+                --max-num-batched-tokens {{inputs.parameters.maxNumBatchedTokens}}
+                --max-num-seqs {{inputs.parameters.maxNumSeqs}}
+                --quantization {{inputs.parameters.quantization}}
             - name: MODEL
               value: "{{inputs.parameters.modelName}}"
             - name: MODEL_NAME

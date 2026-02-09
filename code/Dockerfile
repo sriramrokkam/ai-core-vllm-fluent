@@ -2,9 +2,9 @@ ARG BASE_IMAGE=vllm/vllm-openai:latest
 FROM ${BASE_IMAGE}
 ENV LANG=C.UTF-8
 
-# Install Fluent Bit v3.2+ (supports YAML config)
+# Install Fluent Bit and Supervisor
 RUN apt-get update && \
-    apt-get install -y curl gnupg && \
+    apt-get install -y curl gnupg supervisor && \
     curl -fsSL https://packages.fluentbit.io/fluentbit.key | gpg --dearmor -o /usr/share/keyrings/fluentbit-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/fluentbit-keyring.gpg] https://packages.fluentbit.io/ubuntu/jammy jammy main" > /etc/apt/sources.list.d/fluent-bit.list && \
     apt-get update && \
@@ -19,9 +19,10 @@ RUN mkdir -p /nonexistent/ &&\
 
 ENV HF_HOME=/hf-home
 
-# Copy Fluent Bit configuration
-RUN mkdir -p /fluent-bit/etc
+# Copy configurations
+RUN mkdir -p /fluent-bit/etc /etc/supervisor/conf.d
 COPY fluent-bit.yaml /fluent-bit/etc/fluent-bit.yaml
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Copy Python logging configuration
 RUN mkdir -p /app /app/logs && \
@@ -30,3 +31,13 @@ RUN mkdir -p /app /app/logs && \
 COPY logging_config.json /app/logging_config.json
 ENV VLLM_LOGGING_CONFIG_PATH="/app/logging_config.json"
 ENV ENABLE_JSON_LOGGING="true"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+# Run as non-root
+USER nobody
+
+# Start supervisor
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

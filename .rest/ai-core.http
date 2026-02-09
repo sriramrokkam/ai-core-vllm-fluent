@@ -1,0 +1,64 @@
+###
+# @name auth
+POST  {{$dotenv TOKEN_URL}}/oauth/token?grant_type=client_credentials
+Authorization: Basic {{$dotenv CLIENT_ID}}:{{$dotenv CLIENT_SECRET}}
+
+@access_token = {{auth.response.body.access_token}}
+
+@DEPLOYMENT_ID = d0932c13fbe6f567
+
+
+###
+# @name getDeploymentLogs
+GET {{$dotenv URL}}/v2/lm/deployments/{{DEPLOYMENT_ID}}/logs?$top=1000&$order=asc
+Authorization: Bearer {{access_token}}
+AI-RESOURCE-GROUP: {{$dotenv RESOURCE_GROUP}}
+
+###
+# @name vLLMCompletions
+POST {{$dotenv URL}}/v2/inference/deployments/{{DEPLOYMENT_ID}}/v1/completions
+Authorization: Bearer {{access_token}}
+AI-RESOURCE-GROUP: {{$dotenv RESOURCE_GROUP}}
+Content-Type: application/json
+
+{
+    "model": "facebook/opt-125m",
+    "prompt": "The capital of France is",
+    "max_tokens": 20,
+    "temperature": 0.7
+}
+
+###
+# @name vLLMChatCompletions
+POST {{$dotenv URL}}/v2/inference/deployments/{{DEPLOYMENT_ID}}/v1/chat/completions
+Authorization: Bearer {{access_token}}
+AI-RESOURCE-GROUP: {{$dotenv RESOURCE_GROUP}}
+Content-Type: application/json
+
+{
+    "messages": [
+        {
+            "role": "user",
+            "content": "Write a poem about the sea."
+        }
+    ]
+}
+
+###
+# @name vLLMMetrics
+GET {{$dotenv URL}}/v2/inference/deployments/{{DEPLOYMENT_ID}}/metrics
+Authorization: Bearer {{access_token}}
+AI-RESOURCE-GROUP: {{$dotenv RESOURCE_GROUP}}
+
+
+###
+# @name pushLogToOpensearch
+PUT {{$dotenv LOG_HOST}}/
+Authorization: Basic {{$dotenv LOG_USER}}:{{$dotenv LOG_PASSWORD}}
+Content-Type: application/json
+
+{
+    "msg": "This is a test log entry",
+    "level": "INFO",
+    "timestamp": "${{$timestamp}}"
+}
