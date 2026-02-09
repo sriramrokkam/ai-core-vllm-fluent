@@ -10,13 +10,7 @@
             },
             "timestamp": true,
             "static_fields": {
-                "logger": "vllm",
-                "source": "sap-ai-core",
-                "service": "vllm-inference",
-                "deployment_type": "ai-core-serving",
-                "platform": "kubernetes",
-                "log_source": "vllm-fluent-bit",
-                "environment": "production"
+                "logger": "vllm"
             }
         }
     },

@@ -1,1 +1,11 @@
 .env
+
+# Sensitive credentials - DO NOT COMMIT
+credentials.txt
+*.credentials
+cloud-logging-secret.yaml
+cloud-logging-credentials.json
+
+# Local test files
+*.log
+logs/
